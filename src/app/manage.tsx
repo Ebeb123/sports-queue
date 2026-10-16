@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
-import { View, Text, Pressable, TextInput, StyleSheet, Alert, ScrollView } from 'react-native';
+import { View, Text, Pressable, TextInput, StyleSheet, ScrollView } from 'react-native';
+import { Alert } from '../lib/alert';
 import { useFocusEffect } from 'expo-router';
 
 import { getCourts, addCourt, setCourtStatus, removeCourt, startNewSession, resetAllData, type Court } from '../db/db';

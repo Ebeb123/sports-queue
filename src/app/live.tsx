@@ -2,8 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Text, StyleSheet, View, ScrollView } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
-import { getActiveMatches, getWaitingPlayers, getAppConfig, type ActiveMatch, type WaitingPlayer } from '../db/db';
-import { previewNextUp, minutesSince } from '../logic/matchmaking';
+import { getActiveMatches, getWaitingPlayers, getAppConfig, getLastGroupmates, getOpenCourts, type ActiveMatch, type WaitingPlayer } from '../db/db';import { previewNextUp, minutesSince } from '../logic/matchmaking';
 import { useColors, type Palette } from '../theme';
 
 function fmt(mins: number): string {
@@ -27,8 +26,8 @@ export default function LiveScreen() {
     return () => clearInterval(id);
   }, [load]));
 
-  const nextUp = previewNextUp(pool, now, cfg.matchConfig);
-  const nextIds = new Set(nextUp.map((p) => p.player_id));
+  const nextUp = previewNextUp(pool, now, cfg.matchConfig, getLastGroupmates(), getOpenCourts().length);
+    const nextIds = new Set(nextUp.map((p) => p.player_id));
   const names = (t: { name: string }[]) => t.map((m) => m.name).join(' & ');
 
   const Pill = ({ text }: { text: string }) => (

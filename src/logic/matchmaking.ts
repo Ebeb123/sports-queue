@@ -61,9 +61,21 @@ export function tiersByDistanceFrom(level: Level): Level[] {
   });
 }
 
-// Put players a person just played with at the back of the line (for variety).
-function orderByAvoid(list: WaitingPlayer[], avoid: Set<number>): WaitingPlayer[] {
-  return [...list.filter((p) => !avoid.has(p.player_id)), ...list.filter((p) => avoid.has(p.player_id))];
+// Order candidates for the anchor: closest today-win count first, then avoid
+// recent group-mates, then keep the wait order (the list comes in wait order).
+function orderForAnchor(list: WaitingPlayer[], anchor: WaitingPlayer, avoid: Set<number>): WaitingPlayer[] {
+  return list
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => {
+      const da = Math.abs(a.p.session_wins - anchor.session_wins);
+      const db = Math.abs(b.p.session_wins - anchor.session_wins);
+      if (da !== db) return da - db;                       // nearest win count
+      const aa = avoid.has(a.p.player_id) ? 1 : 0;
+      const bb = avoid.has(b.p.player_id) ? 1 : 0;
+      if (aa !== bb) return aa - bb;                       // not-recently-grouped first
+      return a.i - b.i;                                    // longest wait first
+    })
+    .map((x) => x.p);
 }
 
 export function selectGroup(
@@ -72,22 +84,28 @@ export function selectGroup(
   recent: PartnerMap = {}
 ): WaitingPlayer[] | null {
   if (sorted.length < need) return null;
-  const anchor = sorted[0];
+  const anchor = sorted[0]; // longest-waiting player leads the next match
   const avoid = new Set(recent[anchor.player_id] ?? []);
   const group = [anchor];
 
-  const sameLevel = orderByAvoid(sorted.slice(1).filter((p) => p.level === anchor.level), avoid);
-  for (const p of sameLevel) {
-    group.push(p);
-    if (group.length === need) return group;
+  // Custom-group cohesion: keep a manually-grouped set together.
+  if (anchor.group_id != null) {
+    for (const p of sorted) {
+      if (p !== anchor && p.group_id === anchor.group_id) {
+        group.push(p);
+        if (group.length === need) return group;
+      }
+    }
   }
 
+  // Same level first, ordered by closeness of TODAY's wins to the anchor.
+  const sameLevel = orderForAnchor(sorted.filter((p) => p.level === anchor.level && !group.includes(p)), anchor, avoid);
+  for (const p of sameLevel) { group.push(p); if (group.length === need) return group; }
+
+  // Spillover to nearest levels only when short, same win-closeness ordering.
   for (const lvl of tiersByDistanceFrom(anchor.level)) {
-    const tier = orderByAvoid(sorted.filter((p) => p.level === lvl && !group.includes(p)), avoid);
-    for (const p of tier) {
-      group.push(p);
-      if (group.length === need) return group;
-    }
+    const tier = orderForAnchor(sorted.filter((p) => p.level === lvl && !group.includes(p)), anchor, avoid);
+    for (const p of tier) { group.push(p); if (group.length === need) return group; }
   }
   return group.length === need ? group : null;
 }
@@ -97,18 +115,14 @@ function avgWinRate(team: WaitingPlayer[]): number {
 }
 
 function repeatPairs(t1: WaitingPlayer[], t2: WaitingPlayer[], partners: PartnerMap): number {
-  const paired = (a: WaitingPlayer, b: WaitingPlayer) =>
-    partners[a.player_id]?.includes(b.player_id) ? 1 : 0;
+  const paired = (a: WaitingPlayer, b: WaitingPlayer) => (partners[a.player_id]?.includes(b.player_id) ? 1 : 0);
   let c = 0;
   if (t1.length === 2) c += paired(t1[0], t1[1]);
   if (t2.length === 2) c += paired(t2[0], t2[1]);
   return c;
 }
 
-export function balanceTeams(
-  group: WaitingPlayer[],
-  partners: PartnerMap = {}
-): { team1: WaitingPlayer[]; team2: WaitingPlayer[] } {
+export function balanceTeams(group: WaitingPlayer[], partners: PartnerMap = {}): { team1: WaitingPlayer[]; team2: WaitingPlayer[] } {
   if (group.length === 2) return { team1: [group[0]], team2: [group[1]] };
   const [a, b, c, d] = group;
   const splits: [WaitingPlayer[], WaitingPlayer[]][] = [
@@ -157,9 +171,11 @@ export function planAutoQueue(
 export function previewNextUp(
   pool: WaitingPlayer[],
   now: Date,
-  cfg: MatchConfig = DEFAULT_CONFIG
+  cfg: MatchConfig = DEFAULT_CONFIG,
+  recent: PartnerMap = {},
+  openCourtCount = 1
 ): WaitingPlayer[] {
-  const eligible = pool.filter((p) => isRested(p, now, cfg.minRestMin));
-  const sorted = sortByPriority(eligible, now, cfg);
-  return selectGroup(sorted, cfg.playersPerMatch) ?? [];
+  const plans = planAutoQueue(pool, Math.max(1, openCourtCount), now, cfg, recent);
+  if (plans.length === 0) return [];
+  return [...plans[0].team1, ...plans[0].team2];
 }

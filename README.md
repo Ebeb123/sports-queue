@@ -1,6 +1,29 @@
-# Welcome to your Expo app 👋
+# ShuttleFlow — Badminton Queue Manager
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A queue and court manager for open-play badminton sessions (React Native + Expo + SQLite): add players, check them into the queue, auto-match fair games by level and waiting time, track live courts and win/loss stats.
+
+## Web demo (portfolio)
+
+This app also runs in the browser, so people can try it without installing anything.
+
+- **Live demo:** _add your Vercel link here_
+- In the browser, the app uses the same SQLite schema through [sql.js](https://sql.js.org) (SQLite compiled to WebAssembly, served from `public/`). On phones it still uses `expo-sqlite`, so the mobile app is unchanged.
+- Visitors start with **fictional sample data**. Their changes are saved only in their own browser, and the **Reset** button in the demo bar restores the sample data.
+
+Run the web version locally:
+
+```bash
+npm install
+npx expo start --web
+```
+
+Build it the way Vercel does:
+
+```bash
+npx expo export -p web   # output goes to dist/
+```
+
+The `vercel.json` in this folder tells Vercel to run that command and serve `dist/`.
 
 ## Get started
 

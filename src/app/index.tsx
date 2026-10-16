@@ -1,9 +1,12 @@
 import { useCallback, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, Modal, Alert } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, Modal } from 'react-native';
+import { Alert } from '../lib/alert';
 import { useFocusEffect } from 'expo-router';
 
-import { addPlayer, getAllPlayers, updatePlayer, deletePlayer, deletePlayers, LEVELS, type Level, type Player } from '../db/db';
+import { addPlayer, getPlayerStats, updatePlayer, deletePlayer, deletePlayers, LEVELS, type Level, type PlayerStats } from '../db/db';
 import { useColors, type Palette } from '../theme';
+
+type SortMode = 'name' | 'wins';
 
 export default function AdminScreen() {
   const C = useColors();
@@ -11,20 +14,27 @@ export default function AdminScreen() {
 
   const [name, setName] = useState('');
   const [selectedLevel, setSelectedLevel] = useState<Level>('Beginner');
-  const [players, setPlayers] = useState<Player[]>([]);
+  const [players, setPlayers] = useState<PlayerStats[]>([]);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<number[]>([]);
-  const [editing, setEditing] = useState<Player | null>(null);
+  const [sortMode, setSortMode] = useState<SortMode>('wins');
+
+  const [editing, setEditing] = useState<PlayerStats | null>(null);
   const [editName, setEditName] = useState('');
   const [editLevel, setEditLevel] = useState<Level>('Beginner');
 
-  const refresh = useCallback(() => setPlayers(getAllPlayers()), []);
+  const refresh = useCallback(() => setPlayers(getPlayerStats()), []);
   useFocusEffect(useCallback(() => { refresh(); }, [refresh]));
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return q === '' ? players : players.filter((p) => p.name.toLowerCase().includes(q));
-  }, [players, search]);
+    const base = q === '' ? players : players.filter((p) => p.name.toLowerCase().includes(q));
+    if (sortMode === 'name') {
+      return [...base].sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return base; // getPlayerStats already orders by wins
+  }, [players, search, sortMode]);
+
   const allSelected = filtered.length > 0 && filtered.every((p) => selected.includes(p.player_id));
 
   function handleAdd() { const n = name.trim(); if (!n) return; addPlayer(n, selectedLevel); setName(''); setSelectedLevel('Beginner'); refresh(); }
@@ -34,22 +44,26 @@ export default function AdminScreen() {
     if (!selected.length) return;
     Alert.alert('Delete selected players', `Remove ${selected.length} player(s)? This cannot be undone.`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => { const r = deletePlayers(selected); setSelected([]); refresh(); if (r.skipped > 0) Alert.alert('Done', `Deleted ${r.deleted}. Skipped ${r.skipped} (in an active match).`); } },
+      { text: 'Delete', style: 'destructive', onPress: () => {
+          const r = deletePlayers(selected); setSelected([]); refresh();
+          if (r.skipped > 0) Alert.alert('Done', `Deleted ${r.deleted}. Skipped ${r.skipped} (in an active match).`);
+        } },
     ]);
   }
-  function openEdit(p: Player) { setEditing(p); setEditName(p.name); setEditLevel(p.level); }
+  function openEdit(p: PlayerStats) { setEditing(p); setEditName(p.name); setEditLevel(p.level); }
   function saveEdit() { if (!editing) return; const n = editName.trim(); if (!n) return; updatePlayer(editing.player_id, n, editLevel); setEditing(null); refresh(); }
   function confirmDelete() {
     if (!editing) return;
     Alert.alert('Delete player', `Remove ${editing.name}?`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => { const r = deletePlayer(editing.player_id); if (!r.ok) { Alert.alert('Cannot delete', r.reason ?? ''); return; } setEditing(null); refresh(); } },
+      { text: 'Delete', style: 'destructive', onPress: () => {
+          const r = deletePlayer(editing.player_id);
+          if (!r.ok) { Alert.alert('Cannot delete', r.reason ?? 'Try again later.'); return; }
+          setEditing(null); refresh();
+        } },
     ]);
   }
 
-  const LevelPill = ({ level }: { level: Level }) => (
-    <View style={styles.pill}><Text style={styles.pillText}>{level}</Text></View>
-  );
   const LevelSelector = ({ value, onChange }: { value: Level; onChange: (l: Level) => void }) => (
     <View style={styles.segWrap}>
       {LEVELS.map((l) => (
@@ -73,7 +87,20 @@ export default function AdminScreen() {
         </Pressable>
       </View>
 
-      <View style={styles.headRow}><Text style={styles.h2}>All Players</Text><Text style={styles.count}>{filtered.length}</Text></View>
+      <View style={styles.headRow}>
+        <Text style={styles.h2}>Leaderboard</Text>
+        <Text style={styles.count}>{filtered.length}</Text>
+      </View>
+
+      <View style={styles.sortRow}>
+        <Pressable onPress={() => setSortMode('wins')} style={({ pressed }) => [styles.sortPill, sortMode === 'wins' && styles.sortPillOn, pressed && styles.pressed]}>
+          <Text style={[styles.sortText, sortMode === 'wins' && styles.sortTextOn]}>Most Wins</Text>
+        </Pressable>
+        <Pressable onPress={() => setSortMode('name')} style={({ pressed }) => [styles.sortPill, sortMode === 'name' && styles.sortPillOn, pressed && styles.pressed]}>
+          <Text style={[styles.sortText, sortMode === 'name' && styles.sortTextOn]}>A - Z</Text>
+        </Pressable>
+      </View>
+
       <TextInput style={styles.input} placeholder="Search by name" placeholderTextColor={C.muted} value={search} onChangeText={setSearch} autoCorrect={false} clearButtonMode="while-editing" />
 
       <View style={styles.toolbar}>
@@ -90,13 +117,20 @@ export default function AdminScreen() {
         {filtered.length === 0 ? (
           <Text style={styles.empty}>No players found.</Text>
         ) : (
-          filtered.map((p) => {
+          filtered.map((p, i) => {
             const sel = selected.includes(p.player_id);
+            const rank = sortMode === 'wins' && search.trim() === '' ? i + 1 : null;
             return (
               <Pressable key={p.player_id} onPress={() => toggleSelect(p.player_id)} style={({ pressed }) => [styles.row, pressed && styles.pressed]}>
                 <View style={[styles.checkbox, sel && styles.checkboxOn]} />
-                <Text style={styles.rowName} numberOfLines={1}>{p.name}</Text>
-                <LevelPill level={p.level} />
+                {rank != null && <Text style={styles.rank}>{rank}</Text>}
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowName} numberOfLines={1}>{p.name}</Text>
+                  <Text style={styles.statLine}>
+                    {p.total_wins}W · {p.total_losses}L · {p.games} games · {Math.round(p.win_rate * 100)}%
+                  </Text>
+                </View>
+                <View style={styles.levelPill}><Text style={styles.levelPillText}>{p.level}</Text></View>
                 <Pressable onPress={() => openEdit(p)} hitSlop={6} style={({ pressed }) => [styles.editBtn, pressed && styles.pressed]}>
                   <Text style={styles.editBtnText}>Edit</Text>
                 </Pressable>
@@ -141,7 +175,12 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   segTextOn: { color: C.onLime },
   primaryBtn: { backgroundColor: C.lime, borderRadius: 16, paddingVertical: 15, alignItems: 'center' },
   primaryBtnText: { color: C.onLime, fontWeight: '800', fontSize: 16 },
-  toolbar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, marginBottom: 10 },
+  sortRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  sortPill: { backgroundColor: C.card2, borderRadius: 999, paddingVertical: 8, paddingHorizontal: 16 },
+  sortPillOn: { backgroundColor: C.text },
+  sortText: { fontSize: 13, color: C.muted, fontWeight: '700' },
+  sortTextOn: { color: C.bg },
+  toolbar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12, marginBottom: 10 },
   selectAll: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   selectAllText: { color: C.text, fontSize: 14, fontWeight: '600' },
   checkbox: { width: 22, height: 22, borderRadius: 7, borderWidth: 2, borderColor: C.muted, backgroundColor: 'transparent' },
@@ -150,10 +189,12 @@ const makeStyles = (C: Palette) => StyleSheet.create({
   delBtnOff: { backgroundColor: C.card2 },
   delBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
   list: { backgroundColor: C.card, borderRadius: 24, paddingHorizontal: 6, paddingVertical: 4 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: C.line },
-  rowName: { flex: 1, fontSize: 16, color: C.text, fontWeight: '500' },
-  pill: { backgroundColor: C.card2, borderRadius: 999, paddingVertical: 4, paddingHorizontal: 11 },
-  pillText: { fontSize: 12, fontWeight: '600', color: C.muted },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: C.line },
+  rank: { fontSize: 14, fontWeight: '800', color: C.lime, width: 22, textAlign: 'center' },
+  rowName: { fontSize: 16, color: C.text, fontWeight: '600' },
+  statLine: { fontSize: 12, color: C.muted, marginTop: 3, fontWeight: '600' },
+  levelPill: { backgroundColor: C.card2, borderRadius: 999, paddingVertical: 4, paddingHorizontal: 11 },
+  levelPillText: { fontSize: 11, fontWeight: '700', color: C.muted },
   editBtn: { backgroundColor: C.card2, borderRadius: 999, paddingVertical: 6, paddingHorizontal: 14 },
   editBtnText: { color: C.text, fontWeight: '600', fontSize: 13 },
   empty: { color: C.muted, padding: 20, textAlign: 'center' },
